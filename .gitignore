@@ -1,0 +1,6 @@
+# png files
+*.png
+
+# tensorboard runs data
+runs 
+
