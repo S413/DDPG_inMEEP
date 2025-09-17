@@ -4,3 +4,11 @@
 # tensorboard runs data
 runs 
 
+# ignore vscode
+.vscode/
+
+# ignore Identifier files
+*.Identifier
+
+# ignore pycache
+__pycache__/

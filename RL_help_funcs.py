@@ -60,7 +60,7 @@ class ReplayBuffer:
             print("Failed to save the buffer. Probably something is not serializable.")
             
     
-    def load(self, path='./ReplayBuffer/buffer.pickle'):
+    def load(self, path='./ReplayBuffer/buffer_v2.pickle'):
         with open(path, 'rb') as f:
             loaded_data = pickle.load(f)
         self.buffer = []

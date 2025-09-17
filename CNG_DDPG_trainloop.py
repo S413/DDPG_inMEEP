@@ -84,7 +84,7 @@ def train_ddpg(graph_list,
     ewma_reward = 0
     
     # init cache object and its directory
-    cache = DesignCache('./CacheLocation/cache.json')
+    cache = DesignCache('./CacheLocation/cache_v2.json') # when designs change format, change cache...
     
     # best totals (for keeping track of best T and smallest deltaT)
     best_T = 0.6 # largest default total transmission
@@ -124,7 +124,7 @@ def train_ddpg(graph_list,
                 torch.tensor(hole_flag_full.reshape(30,14)[:,:7].reshape(-1), dtype=torch.float, device=device),
                 torch.tensor(diameters_full.reshape(30,14)[:,:7].reshape(-1), dtype=torch.float, device=device)
                 ], dim=1) # (2,30,7) -> flatten with reshape(-1), so we have (N,2)
-            Tt, Tb = simulation_cacher(cache, hole_flag_full, diameters) # they are returned as lists at this point
+            Tt, Tb = simulation_cacher(cache, hole_flag_full, diameters_full) # they are returned as lists at this point
             # make them into tensors or next function fails
             Tt = torch.Tensor(Tt)
             Tb = torch.Tensor(Tb)
@@ -264,7 +264,7 @@ def train_ddpg(graph_list,
                 
                 hole_flag, diameters = decode_actions_to_design(action) # equivalent to next state, with T
                 hole_flag_full, diameters_full = mirror_design(hole_flag, diameters) # mirroring if halved
-                Tt, Tb = simulation_cacher(cache, hole_flag_full, diameters) # they are returned as lists at this point
+                Tt, Tb = simulation_cacher(cache, hole_flag_full, diameters_full) # they are returned as lists at this point
                 # make them into tensors or next function fails
                 Tt = torch.Tensor(Tt)
                 Tb = torch.Tensor(Tb)
