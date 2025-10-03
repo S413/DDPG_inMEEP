@@ -75,7 +75,7 @@ def train_ddpg(graph_list,
     buffer = PriorityReplayBuffer(buffer_capacity, initial_mode='td_error')
     
     # tensorboard's writer defined here
-    writer = SummaryWriter(log_dir='runs/ddpg_training/new_model_new_graph03')
+    writer = SummaryWriter(log_dir='runs/ddpg_training/new_model_new_graph04')
     
     # global steps or total number of steps
     total_steps = 0 # count environment interactions
@@ -114,7 +114,7 @@ def train_ddpg(graph_list,
             with torch.no_grad():
                 action = actor(graph.x, graph.edge_index, graph.edge_attr)
             action = action + noise.sample().to(device)
-            action = torch.clamp(action, -1, 1)
+            action = torch.clamp(action, 0, 1)
 
             # ── Decode & simulate ──────────────────────
             hole_flag, diameters = decode_actions_to_design(action) # equivalent to next state, with T

@@ -12,46 +12,52 @@ import hashlib
 import numpy as np
 import json 
 import pathlib
+import torch
 
 from simulation_funcs import run_meep_sim_wsl
 from action_to_designs import topology_matrix_from_decoded_actions
 
-def hash_design(matrix):
-    ''' 
-    ''' 
-    matrix_bytes = matrix.astype(np.uint8).tobytes()
-    return hashlib.sha256(matrix_bytes).hexdigest()
+def hash_design_quantized(hole_flag: torch.Tensor,
+                      diam_um: torch.Tensor,
+                      step_um: float = 0.02,
+                      sim_config: dict | None = None) -> str:
+    """
+    Deterministic hash of a design from torch tensors.
+    - hole_flag: 0/1 tensor, any dtype, any device, same shape as diam_um
+    - diam_um: diameters in microns (float), same shape
+    - step_um: quantization step (e.g., 0.02 µm -> codes 0,1,2,...)
+    - sim_config: optional dict of sim params to fold into the key
+    """
+    if hole_flag.shape != diam_um.shape:
+        raise ValueError(f"Shape mismatch: {hole_flag.shape=} vs {diam_um.shape=}")
 
-# def _pack_bytes(arr: np.ndarray) -> bytes:
-#     a = np.ascontiguousarray(arr)
-#     if a.dtype.byteorder not in ('<', '=', '|'):
-#         a = a.byteswap().newbyteorder('<')
-#     return a.tobytes()
+    # Detach, move to CPU, make contiguous
+    hf = hole_flag.detach().to(dtype=torch.uint8).contiguous().view(-1).cpu()
+    d  = diam_um.detach().to(dtype=torch.float32).contiguous().view(-1).cpu()
 
-# # TODO: this here is just a more involved version of the above function
-# def hash_design(hole_flag: np.ndarray,
-#                        diam_um: np.ndarray):
-#     """
-#     Deterministic hash of (hole_flag, diameters).
-#     - hole_flag: 0/1 array
-#     - diam_um: diameters (microns), same shape
-#     """
-#     hf = np.ascontiguousarray(hole_flag.astype(np.uint8).reshape(-1))
-#     d  = np.asarray(diam_um, dtype=np.float32).reshape(-1)
-#     if hf.shape != d.shape:
-#         raise ValueError(f"Shape mismatch: hole_flag {hf.shape} vs diam_um {d.shape}")
+    # Quantize to integer codes; mask non-holes to 0
+    # e.g., 0.00→0, 0.04→2, 0.16→8 when step=0.02
+    codes = torch.round(d / step_um).to(torch.int16)
+    codes = torch.where(hf.bool(), codes, torch.zeros_like(codes))
 
-#     # ~0.1 nm at 1e-4 µm; keeps equality stable if decode already rounded
-#     q = np.rint(d * 1e4).astype(np.int32)
+    # Pack bytes (explicit little-endian for cross-platform stability)
+    hf_np    = hf.numpy()                                         # uint8
+    codes_np = codes.numpy().astype('<i2', copy=False)            # int16 little-endian
+    shape_np = np.array(diam_um.shape, dtype='<i4')
 
-#     # Ensure zero where no hole
-#     q = np.where(hf.astype(bool), q, 0).astype(np.int32)
+    h = hashlib.sha256()
+    h.update(b"SCHEMA:2;UNIT=um;STEP=" + repr(float(step_um)).encode())
+    h.update(b";SHAPE:")
+    h.update(shape_np.tobytes())
+    if sim_config is not None:
+        h.update(b";CFG:")
+        h.update(json.dumps(sim_config, sort_keys=True).encode())
 
-#     h = hashlib.sha256()
-#     h.update(b"SCHEMA:1;")
-#     h.update(b"HF:"); h.update(_pack_bytes(hf))
-#     h.update(b"DQ:"); h.update(_pack_bytes(q))
-#     return h.hexdigest()
+    h.update(b";HF:")
+    h.update(hf_np.tobytes())
+    h.update(b";DQ:")
+    h.update(codes_np.tobytes())
+    return h.hexdigest()
 
 class DesignCache:
     def __init__(self, cache_file):
@@ -80,9 +86,12 @@ def simulation_cacher(cache_obj, hole_flag, diameters):
     Recall that is is only valid for the current simulation setup. As soon as you change
     a parameter in the simulation script, this is not guaranteed valid anymore
     ''' 
+    # matrix not used then?
     matrix = topology_matrix_from_decoded_actions(hole_flag, diameters) 
-    design_hash = hash_design(matrix)
-    
+    design_hash = hash_design_quantized(hole_flag, diameters)
+    # sanity check
+    print("Cache key:", (design_hash))
+
     cached_result = cache_obj.get(design_hash)
     
     if cached_result:
