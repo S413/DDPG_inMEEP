@@ -7,52 +7,125 @@ Created on Wed Jun 18 14:09:52 2025
 
 ## functions for the simulation part of the DDPG actor critic using GCN
 
+## there will be a difference if code run from linux computer and not original windows pc 
+
 import json
 import subprocess
 import pathlib
 import uuid
 import numpy as np
+import platform
+import os 
+import shutil
 
-def run_meep_sim_wsl(hole_flag, diameters):
+# some helper functions to detect OS and convert paths 
+def _is_windows():
+    return platform.system() == "Windows"
+
+def _is_linux():
+    return platform.system() == "Linux"
+
+def _is_wsl_linux():
+    try:
+        return _is_linux() and "microsoft" in platform.release().lower()
+    except Exception:
+        return False
+    
+def _has_wsl_on_windows():
+    return _is_windows() and shutil.which("wsl") is not None
+
+def _win_to_wsl_path(win_path: str):
+    # convert win path to linux path 
+    s = win_path.replace("\\", "/") 
+    if len(s) > 2 and s[1] == ":":
+        drive = s[0].lower()
+        rest = s[2:] if s[2] == "/" else s[2:]
+        return f"mnt/{drive}{rest}"
+    return s
+
+def run_meep_sim_wsl(hole_flag, 
+                     diameters,
+                     mode: str = "auto",
+                     wsl_distro: str = "Ubuntu",
+                     ):
     uid = uuid.uuid4().hex
     
-    TMP_DIR = pathlib.Path(r"C:\tmp")          # pick any writable directory
-    TMP_DIR.mkdir(parents=True, exist_ok=True) # ensure it exists
-    
-    param_file_win = TMP_DIR / f"params_{uid}.json"
-    result_file_win = TMP_DIR / f"result_{uid}.json"
+    # first decided on runtime mode
+    if mode == "auto":
+        if _has_wsl_on_windows():
+            mode_resolved = "windows_wsl"
+            # define tmp directory here since it is windows and might not open if in wsl path
+            TMP_DIR = pathlib.Path(r"C:\tmp")
+        elif _is_linux():
+            mode_resolved = "linux"
+            # define tmp directory here since it is linux and no need to convert or go to externals
+            TMP_DIR = pathlib.Path("/home/MeepDDPG/tmp")
+        else:
+            raise RuntimeError("Could not auto-detect runtime mode. Please specify 'mode' explicitly.")
+    else:
+        mode_resolved = mode
+
+    # now we deal with the temp directory and temp files 
+    TMP_DIR.mkdir(parents=True, exist_ok=True)
+
+    param_file = TMP_DIR / f"params_{uid}.json"
+    result_file = TMP_DIR / f"result_{uid}.json"
 
     param_dict = {
-        "hole_flag": hole_flag.tolist(),
-        "diameters": diameters.tolist()
-    }
-
-    # Save parameters to file
-    with open(param_file_win, "w") as f:
+        "hole_flag": np.asarray(hole_flag).tolist(),
+        "diameters": np.asarray(diameters).tolist(),
+        }
+    
+    with open(param_file, "w") as f:
         json.dump(param_dict, f)
-
-    # Convert to WSL paths
-    param_file_wsl = f"/mnt/c/tmp/{param_file_win.name}"
-    result_file_wsl = f"/mnt/c/tmp/{result_file_win.name}"
-
-    # python path of the environment in use
-    python_path = "/root/miniconda3/envs/mp/bin/python"
     
-    # Run the WSL-side script
-    cmd = [
-        "wsl", "-d", "Ubuntu",  # 
-        python_path, "/root/QRLike/simulate_in_wsl.py",
-        "--param_file", param_file_wsl,
-        "--out_file", result_file_wsl
-    ]
-    subprocess.run(cmd, check=True)
+    try:
+        if mode_resolved == "windows_wsl":
+            # convert windows paths to wsl readable paths
+            param_file_wsl = _win_to_wsl_path(str(param_file))
+            result_file_wsl = _win_to_wsl_path(str(result_file))
 
-    # Read result back
-    with open(result_file_win, "r") as f:
-        result = json.load(f) # this is a dict {"transmission":([top trans], [bot trans])}
-    
-    # clear to prevent clutter
-    param_file_win.unlink()
-    result_file_win.unlink()
-    
-    return result["Transmission"]
+            # defining python and script path here since it is windows -- these are the paths within wsl
+            python_path = "/root/miniconda3/envs/mp/bin/python"
+            script_path = "/root/QRLike/simulate_in_wsl.py"
+
+            cmd = [
+                "wsl", "-d", wsl_distro,
+                python_path, script_path,
+                "--param_file", param_file_wsl,
+                "--out_file", result_file_wsl
+            ]
+            subprocess.run(cmd, check=True) 
+
+            # read back into windows
+            with open(result_file, "r") as f:
+                result = json.load(f)
+
+        elif mode_resolved == "linux":
+            # use linux paths directly
+            # some of the paths might also differ
+
+            python_path = "/home/sergio/miniconda3/envs/mp-rl/bin/python" # not sure what the python path will be in the server. Do that first.
+            script_path = "/home/MeepDDPG/simulationScript/simulate_in_wsl.py"
+
+            cmd = [
+                python_path, script_path,
+                "--param_file", str(param_file),
+                "--out_file", str(result_file)
+            ]
+            subprocess.run(cmd, check=True)
+
+            with open(result_file, "r") as f:
+                result = json.load(f)
+
+        else:
+            raise ValueError(f"Unknown mode '{mode_resolved}'")
+        
+    finally:
+        # clean up temp files
+        if param_file.exists():
+            param_file.unlink()
+        if result_file.exists():
+            result_file.unlink()
+
+    return result['Transmission']

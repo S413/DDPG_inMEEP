@@ -39,12 +39,7 @@ def decode_actions_to_design(
     presence_score = actions[:, 0]
     size_score = actions[:, 1]
 
-    # Sanity checks 
-    print(f"Largest raw size: {size_score.max()}")
-    print(f"Smallest raw size: {size_score.min()}")
-    print(f"Entire sizes array: {size_score}")
-
-    # ---- 1) Presence
+    # hole presence
     if presence_activation == "sigmoid":
         p = torch.sigmoid(presence_score)
     elif presence_activation == "tanh":
@@ -57,7 +52,7 @@ def decode_actions_to_design(
 
     hole_flag = (p > presence_thresh).to(actions.dtype)
 
-    # ---- 2) Size normalization s in [0,1]
+    # normalization s in [0,1]
     if size_activation == "sigmoid":
         s = torch.sigmoid(size_score)
     elif size_activation == "tanh":
@@ -68,7 +63,7 @@ def decode_actions_to_design(
     else:
         raise ValueError("size_activation must be 'sigmoid'|'tanh'|'raw'.")
 
-    # ---- 3) Build the *actual* grid we will snap to
+    # grid 
     # Use floor so we don't exceed max even if (range/step) is non-integer
     total_range = max_diam - min_diam
     n_bins = int(torch.floor(torch.tensor(total_range / step)) .item()) + 1
@@ -79,7 +74,7 @@ def decode_actions_to_design(
         grid = torch.cat([grid, torch.tensor([max_diam], device=grid.device, dtype=grid.dtype)])
         n_bins = grid.numel()
 
-    # ---- 4) Map s in [0,1] to a *real-valued* diameter, then quantize to grid
+    # Map s in [0,1] to a preset diameter, then quantize to grid
     # Use arithmetic mapping only to pick an index; final value is from `grid` to avoid drift.
     # Compute ideal (unquantized) target diameter:
     target = min_diam + s * (max_diam - min_diam)
@@ -104,13 +99,8 @@ def decode_actions_to_design(
     idx = idx.to(torch.long)
     quantized = grid[idx]  # exact grid value; idempotent on re-decode
 
-    # ---- 5) Mask by presence (diameter=0 where no hole)
+    # mask by presence (diameter=0 where no hole)
     final_diameters = hole_flag * quantized
-
-    # sanity checks 2
-    print(f"Largest final diameter: {final_diameters.max()}")
-    print(f"Smallest final diameter: {final_diameters.min()}")
-    print(f"Entire final diameters array: {final_diameters}")
 
     return hole_flag, final_diameters
 
@@ -129,8 +119,7 @@ def topology_matrix_from_decoded_actions(hole_flag, diameters, shape=(30,14)):
     #             # matrix[i,j] = 1 # if using above comment this one out 
     #         idx += 1
     matrix = hole_flag.view(shape[0], shape[1]) * diameters.view(shape[0], shape[1])
-    # sanity check, resulting matrix:
-    print(f"Resulting design matrix cacher (diameters, 0 where no hole):\n{matrix}")
+    
     return matrix.cpu().numpy()
 
 # for halving without changing models
