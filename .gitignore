@@ -2,13 +2,22 @@
 *.png
 
 # tensorboard runs data
-runs 
+runs/ 
 
 # ignore vscode
 .vscode/
 
-# ignore Identifier files
-*.Identifier
+# ignore Zone.Identifier files
+*Zone.Identifier
 
 # ignore pycache
 __pycache__/
+
+# npy files
+*.npy
+
+# replay buffers
+ReplayBuffer/
+
+# caches
+CacheLocation
