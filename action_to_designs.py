@@ -26,7 +26,7 @@ def decode_actions_to_design(
     presence_activation="sigmoid",   # "sigmoid" | "tanh" | "raw"
     presence_thresh=0.6,             # if "tanh" use ~0.0; if "raw", pick accordingly
     size_activation="raw",          # "sigmoid" | "tanh" | "raw"
-    quant_mode="stochastic",            # "nearest" | "floor" | "stochastic"
+    quant_mode="nearest",            # "nearest" | "floor" | "stochastic"
     eps=1e-9
 ):
     """
@@ -110,15 +110,10 @@ def topology_matrix_from_decoded_actions(hole_flag, diameters, shape=(30,14)):
     '''
     device = hole_flag.device
     matrix = torch.zeros(shape, dtype=torch.float32, device=device)
-    idx = 0
-    # seems largely unnecessary, just reshape hole_flag and turn to numpy? 
-    # for i in range(shape[0]):
-    #     for j in range(shape[1]):
-    #         if hole_flag[idx] > 0:
-    #             matrix[i,j] = diameters[idx] # only if we are saving the diameters like that, otherwise binary
-    #             # matrix[i,j] = 1 # if using above comment this one out 
-    #         idx += 1
+    
     matrix = hole_flag.view(shape[0], shape[1]) * diameters.view(shape[0], shape[1])
+
+    assert matrix.shape == shape, "Design matrix has incorrect shape."
     
     return matrix.cpu().numpy()
 

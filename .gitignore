@@ -21,3 +21,15 @@ ReplayBuffer/
 
 # caches
 CacheLocation
+
+# saved designs
+SavedDesigns
+
+# tmp
+tmp/
+
+# logs
+*.log 
+
+#.github/
+.github/

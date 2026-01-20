@@ -12,16 +12,91 @@ import torch
 import pickle
 import numpy as np
 
-def reward_balanced_transmission(Tt, Tb):
-    imbalance = torch.abs(Tt - Tb) / (Tt + Tb + 1e-6)
-    return 0.5 * (Tt + Tb) * (1 - imbalance)
+# TODO: create here the variables to keep track of best designs, e.g. best total transmission, best balanced transmission, etc.
+# TODO: create here reward functions as well; expect large implementation differences for objective split ratio
 
-def reward_min(Tt, Tb):
+class RewardHelper:
+    def __init__(self, template: str,
+                 best_T: float = 0.6,
+                 delta_T: float = 0.06, 
+                 target_ratio: float = 3.0,
+                 delta: float = 0.2):
+        '''
+        A helper to select the reward function to use, and what parameters to 
+        keep track of.
+        Could be extended to have more options as templates increase. Consolidate later.
+        '''
+        self.template = template
+        
+        if template == "2x2":
+            self.best_T = best_T # since this is roughly transmission of opposite output arm
+            self.delta_T = delta_T # roughly 10%
+        else:
+            self.target_ratio = target_ratio # target split ratio
+            self.delta = delta      # acceptable deviation from target ratio
+            self.total_trans = 0.0
+
+    def compute_reward(self, Tt, Tb):
+        if self.template == "2x2":
+            return reward_balanced_transmission(Tt, Tb)
+        else:
+            return reward_mini(Tt, Tb, self.delta, self.target_ratio)
+        
+    def update_best_params(self, Tt, Tb):
+        if self.template == "2x2":
+            # Update best_T based on current performance
+            current_total = torch.min(Tt) + torch.min(Tb)
+            if current_total > self.best_T:
+                self.best_T = current_total
+            if abs(torch.min(Tt) - torch.min(Tb)) < self.delta_T:
+                self.delta_T = abs(torch.min(Tt) - torch.min(Tb))
+
+        else:
+            # for now we just keep track of the total transmission since the
+            # different splits make it a bit more code heavy to track ratios
+            self.total_trans = torch.min(Tt) + torch.min(Tb)
+
+    def checking_criteria(self, Tt, Tb):
+        if self.template == "2x2":
+            if (torch.abs(Tt - Tb) <= self.delta_T) and (Tt+Tb >= self.best_T):
+                self.update_best_params(Tt, Tb)
+                return self.compute_reward(Tt, Tb) + 10.0, True # bonus for meeting criteria, flag on
+            else:
+                return self.compute_reward(Tt, Tb), False # no bonus, flag off
+        else:
+            # for mini splitter, just positive reward is delta within target ratio
+            reward = self.compute_reward(Tt, Tb)
+            if reward > 0:
+                return reward, True 
+            else:
+                return reward, False
+            
+
+def reward_balanced_transmission(Tt, Tb, best_T):
+    reward = (
+                -best_T + torch.min(Tt)+torch.min(Tb) + # if total transmission is high, difference will be 0 or +
+                -2.0 * torch.abs(torch.min(Tt)-torch.min(Tb)) # large difference in transission per arm is bad
+                )
+    
+    return reward
+
+def reward_mini(Tt, Tb, delta, ratio):
     '''
-    Give reward based on the smallest arm transmission.
-    Should suppress preferring keeping one transmission high. 
+    Reward function for the 1x2 splitter.
+    Taken from the paper with minor modifications (penalization for termination,
+    because they are not a possible action in our more constrained setup)
     '''
-    return torch.min(Tt, Tb) # since these are inversely correlated
+    if torch.max(torch.min(Tt), torch.min(Tb)) >= 0.5:
+        if torch.abs(torch.mean(Tt / Tb) - ratio) < delta:
+            reward = torch.mean(Tt / Tb)
+        elif torch.abs(torch.mean(Tb / Tt) - ratio) < delta:
+            reward = torch.mean(Tb / Tt)
+        else:
+            reward = torch.max(torch.min(Tb / Tt), torch.min(Tt / Tb))
+    else:
+        reward = -10
+    
+    return reward
 
 class ReplayBuffer:
     def __init__(self, capacity):

@@ -15,7 +15,6 @@ import pathlib
 import torch
 
 from simulation_funcs import run_meep_sim_wsl
-from action_to_designs import topology_matrix_from_decoded_actions
 
 def hash_design_quantized(hole_flag: torch.Tensor,
                       diam_um: torch.Tensor,
@@ -85,9 +84,7 @@ def simulation_cacher(cache_obj, hole_flag, diameters):
     We will first check the cache for the results, else we run a simulation in MEEP
     Recall that is is only valid for the current simulation setup. As soon as you change
     a parameter in the simulation script, this is not guaranteed valid anymore
-    ''' 
-    # matrix not used then?
-    matrix = topology_matrix_from_decoded_actions(hole_flag, diameters) 
+    '''  
     design_hash = hash_design_quantized(hole_flag, diameters)
     # sanity check
     print("Cache key:", (design_hash))

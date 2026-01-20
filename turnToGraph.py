@@ -21,25 +21,39 @@ def create_graph_from_topology_matrix(matrix,
                                       sinusodal_posenc=True,
                                       add_boundary_flags=True,
                                       add_selfloops=True,
-                                      undirected=True):
+                                      undirected=True,
+                                      device=None):
     '''
-    Converts binary topolgy matric into a Pytorch Geometric Graph
-    This is still not a great way to do this, I'm not convinced'
+    Converts topology matrix into a PyTorch Geometric Graph.
 
     Parameters
     ----------
-    matrix : TYPE
-        DESCRIPTION.
-    use_8_conn : TYPE, optional
-        DESCRIPTION. The default is False.
-    include_coords : TYPE, optional
-        DESCRIPTION. The default is True.
+    matrix : np.ndarray or torch.Tensor
+        2D input matrix containing the topology (hole flags or diameters)
+    use_8_conn : bool, optional
+        If True, includes diagonal connections. Default is False.
+    include_coords : bool, optional
+        If True, adds normalized coordinate features. Default is True.
+    sinusodal_posenc : bool, optional
+        If True, adds sinusoidal position encoding. Default is True.
+    add_boundary_flags : bool, optional
+        If True, adds edge/corner detection features. Default is True.
+    add_selfloops : bool, optional
+        If True, adds self-loops to nodes. Default is True.
+    undirected : bool, optional
+        If True, makes edges bidirectional. Default is True.
+    device : torch.device, optional
+        Device to place tensors on. Default is None (CPU).
 
     Returns
     -------
-    None.
-
+    Data
+        PyTorch Geometric Data object containing the graph.
     '''
+    if not isinstance(matrix, (np.ndarray, torch.Tensor)):
+        raise TypeError("matrix must be numpy array or torch tensor")
+    if len(matrix.shape) != 2:
+        raise ValueError("matrix must be 2D")
     
     H, W = matrix.shape # unsure if they will be padded or unpadded. Also helps if I change design region dimensions, I spose
     node_features = []
@@ -53,7 +67,7 @@ def create_graph_from_topology_matrix(matrix,
     # helper fun for normalized positions in [-1,1]
     def norm_xy(i, j):
         x = 0.0 if W == 1 else (j / (W-1)) * 2.0 - 1.0
-        y = 0.0 if H == 1 else (i / (W-1)) * 2.0 - 1.0
+        y = 0.0 if H == 1 else (i / (H-1)) * 2.0 - 1.0
         return x,y
     
     # neighbors patterns 
@@ -92,6 +106,7 @@ def create_graph_from_topology_matrix(matrix,
             node_features.append(feats)
             
             # edges from (i,j) to neighbors
+            # TODO: use 1/R to compute \delta and r, otherwise we have non isometric x,y,z which is different from meep simulation voxels 
             for di, dj in neighbors:
                 ni, nj = i + di, j + dj
                 if 0 <= ni < H and 0 <= nj < W:
@@ -100,11 +115,15 @@ def create_graph_from_topology_matrix(matrix,
                     edge_src.append(u)
                     edge_dst.append(v)
                     
-                    x2, y2 = norm_xy(ni,nj)
-                    dx, dy = (x2 - x_norm), (y2 - y_norm)
-                    r = math.hypot(dx, dy)
+                    # droppaable now
+                    x2, y2 = norm_xy(ni,nj) # drop?
+                    dx, dy = (x2 - x_norm), (y2 - y_norm) # drop?
+                    # for edges
+                    dx_idx = nj - j 
+                    dy_idx = ni - i
+                    r = math.hypot(dx_idx, dy_idx)
                     is_diag = 1.0 if (di != 0 and dj != 0) else 0.0
-                    edge_attrs.append([dx, dy, r, is_diag])
+                    edge_attrs.append([dx_idx, dy_idx, r, is_diag])
                     
     x = torch.tensor(node_features, dtype=torch.float)
     edge_index = torch.tensor([edge_src, edge_dst], dtype=torch.long)
@@ -112,19 +131,22 @@ def create_graph_from_topology_matrix(matrix,
     
     # make undirected, keep node attrs in sync, whatever that latter half means
     if undirected:
-        # edge_index = to_undirected(edge_index, num_nodes=x.size(0))
-        # duplicate attrs for reverse edges
-        # to undirected doubles edges; mirror attrs by simple title
-        # edge_attr = torch.cat([edge_attr, edge_attr], dim=0)
-        edge_index, edge_attr = to_undirected(
-                edge_index, edge_attr=edge_attr, num_nodes=x.size(0)
-                )   
-        
+        # For undirected edges, we need to flip dx,dy for reversed edges
+        edge_index_rev = edge_index.flip(0)
+        edge_attr_rev = edge_attr.clone()
+        edge_attr_rev[:, 0:2] *= -1  # Negate dx,dy for reversed edges
+        edge_index = torch.cat([edge_index, edge_index_rev], dim=1)
+        edge_attr = torch.cat([edge_attr, edge_attr_rev], dim=0)
+    
+    # TODO: this doesn't support general edge attreibute matrix
+    # something will go wrong with the way self-loops are added as they are now-- appending zeros unconditionally
     if add_selfloops:
+        old_edge_num = edge_index.size(1)
         edge_index, _ = add_self_loops(edge_index, num_nodes=x.size(0))
+        num_loops_added = edge_index.size(1) - old_edge_num
         # for self loops define dx=dy=0, r=0, is_diag=0
-        num_loops_added = x.size(0)
-        self_attr = torch.zeros((num_loops_added, edge_attr.size(1)), dtype=edge_attr.dtype)
+        self_attr = torch.zeros((num_loops_added, edge_attr.size(1)), 
+                              dtype=edge_attr.dtype, device=edge_attr.device)
         edge_attr = torch.cat([edge_attr, self_attr], dim=0)
         
     data = Data(x=x, edge_index=edge_index, edge_attr=edge_attr)

@@ -36,11 +36,22 @@ def _has_wsl_on_windows():
 
 def _win_to_wsl_path(win_path: str):
     # convert win path to linux path 
-    s = win_path.replace("\\", "/") 
+    s = win_path.replace("\\", "/")
+    
+    # Handle UNC paths like //wsl$/Ubuntu/... or \\wsl$\Ubuntu\...
+    if s.startswith("//wsl$/") or s.startswith("/wsl$/"):
+        # Extract the distro and path: //wsl$/Ubuntu/path/to/file -> /path/to/file
+        parts = s.split("/")
+        # parts[0] = '', parts[1] = '', parts[2] = 'wsl$', parts[3] = 'Ubuntu', parts[4:] = rest
+        if len(parts) > 4:
+            return "/" + "/".join(parts[4:])
+    
+    # Handle regular Windows paths like C:\path\to\file
     if len(s) > 2 and s[1] == ":":
         drive = s[0].lower()
         rest = s[2:] if s[2] == "/" else s[2:]
         return f"mnt/{drive}{rest}"
+    
     return s
 
 def run_meep_sim_wsl(hole_flag, 
@@ -55,11 +66,11 @@ def run_meep_sim_wsl(hole_flag,
         if _has_wsl_on_windows():
             mode_resolved = "windows_wsl"
             # define tmp directory here since it is windows and might not open if in wsl path
-            TMP_DIR = pathlib.Path(r"C:\tmp")
+            TMP_DIR = pathlib.Path(r"\\wsl$\Ubuntu\root\QRLike\DDPG_Agent\tmp")
         elif _is_linux():
             mode_resolved = "linux"
             # define tmp directory here since it is linux and no need to convert or go to externals
-            TMP_DIR = pathlib.Path("/home/MeepDDPG/tmp")
+            TMP_DIR = pathlib.Path("/home/sergio/DDPG_inMEEP/tmp")
         else:
             raise RuntimeError("Could not auto-detect runtime mode. Please specify 'mode' explicitly.")
     else:
@@ -71,9 +82,9 @@ def run_meep_sim_wsl(hole_flag,
     param_file = TMP_DIR / f"params_{uid}.json"
     result_file = TMP_DIR / f"result_{uid}.json"
 
-    param_dict = {
-        "hole_flag": np.asarray(hole_flag).tolist(),
-        "diameters": np.asarray(diameters).tolist(),
+    param_dict = { 
+        "hole_flag": hole_flag.detach().cpu().numpy().tolist(),
+        "diameters": diameters.detach().cpu().numpy().tolist()
         }
     
     with open(param_file, "w") as f:
@@ -93,7 +104,8 @@ def run_meep_sim_wsl(hole_flag,
                 "wsl", "-d", wsl_distro,
                 python_path, script_path,
                 "--param_file", param_file_wsl,
-                "--out_file", result_file_wsl
+                "--out_file", result_file_wsl,
+                "--template", "1x2"
             ]
             subprocess.run(cmd, check=True) 
 
@@ -106,7 +118,7 @@ def run_meep_sim_wsl(hole_flag,
             # some of the paths might also differ
 
             python_path = "/home/sergio/miniconda3/envs/mp-rl/bin/python" # not sure what the python path will be in the server. Do that first.
-            script_path = "/home/MeepDDPG/simulationScript/simulate_in_wsl.py"
+            script_path = "/home/sergio/DDPG_inMEEP/simulationScript/simulate_in_wsl.py"
 
             cmd = [
                 python_path, script_path,
