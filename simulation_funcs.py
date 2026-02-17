@@ -105,7 +105,7 @@ def run_meep_sim_wsl(hole_flag,
                 python_path, script_path,
                 "--param_file", param_file_wsl,
                 "--out_file", result_file_wsl,
-                "--template", "1x2"
+                "--template", "2x2"
             ]
             subprocess.run(cmd, check=True) 
 

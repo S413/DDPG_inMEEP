@@ -27,6 +27,7 @@ def decode_actions_to_design(
     presence_thresh=0.6,             # if "tanh" use ~0.0; if "raw", pick accordingly
     size_activation="raw",          # "sigmoid" | "tanh" | "raw"
     quant_mode="nearest",            # "nearest" | "floor" | "stochastic"
+    ste=True,
     eps=1e-9
 ):
     """
@@ -50,7 +51,12 @@ def decode_actions_to_design(
     else:
         raise ValueError("presence_activation must be 'sigmoid'|'tanh'|'raw'.")
 
-    hole_flag = (p > presence_thresh).to(actions.dtype)
+    hole_flag_hard = (p > presence_thresh).to(actions.dtype)
+    if ste:
+        # Straight-through: forward is hard, backward follows p
+        hole_flag = hole_flag_hard.detach() - p.detach() + p
+    else:
+        hole_flag = hole_flag_hard
 
     # normalization s in [0,1]
     if size_activation == "sigmoid":
@@ -97,7 +103,12 @@ def decode_actions_to_design(
         raise ValueError("quant_mode must be 'nearest'|'floor'|'stochastic'.")
 
     idx = idx.to(torch.long)
-    quantized = grid[idx]  # exact grid value; idempotent on re-decode
+    quantized_hard = grid[idx]  # exact grid value; idempotent on re-decode
+    if ste:
+        # Straight-through: forward is quantized, backward follows continuous target
+        quantized = quantized_hard.detach() - target.detach() + target
+    else:
+        quantized = quantized_hard
 
     # mask by presence (diameter=0 where no hole)
     final_diameters = hole_flag * quantized

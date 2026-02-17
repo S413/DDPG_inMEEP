@@ -188,7 +188,7 @@ class MEEP_2x2Splitter():
                 size=mp.Vector3(0, self.waveguide_width*1.2)
                 )
             )
-        transMonitorBot = self.sim.add_flux(
+        self.transMonitorBot = self.sim.add_flux(
             self.fcen,
             self.fwidth,
             nfreq,

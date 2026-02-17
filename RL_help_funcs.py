@@ -38,7 +38,7 @@ class RewardHelper:
 
     def compute_reward(self, Tt, Tb):
         if self.template == "2x2":
-            return reward_balanced_transmission(Tt, Tb)
+            return reward_balanced_transmission(Tt, Tb, self.best_T) # this is terrible param passing
         else:
             return reward_mini(Tt, Tb, self.delta, self.target_ratio)
         
@@ -58,7 +58,7 @@ class RewardHelper:
 
     def checking_criteria(self, Tt, Tb):
         if self.template == "2x2":
-            if (torch.abs(Tt - Tb) <= self.delta_T) and (Tt+Tb >= self.best_T):
+            if (torch.abs(torch.min(Tt) - torch.min(Tb)) <= self.delta_T) and (torch.min(Tt)+torch.min(Tb) >= self.best_T):
                 self.update_best_params(Tt, Tb)
                 return self.compute_reward(Tt, Tb) + 10.0, True # bonus for meeting criteria, flag on
             else:

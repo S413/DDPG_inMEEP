@@ -219,7 +219,7 @@ def train_ddpg(graph_list,
     buffer = PriorityReplayBuffer(buffer_capacity, initial_mode='td_error')
     
     # tensorboard's writer defined here
-    writer = SummaryWriter(log_dir='runs/ddpg_training/mini_1x2_2')
+    writer = SummaryWriter(log_dir='runs/ddpg_training/TSE_actions00')
     
     # global steps or total number of steps
     total_steps = 0 # count environment interactions
@@ -231,16 +231,20 @@ def train_ddpg(graph_list,
     cache = DesignCache('./CacheLocation/cache_mini.json') # when designs change format, change cache...
     
     # reward helper to keep track of some params
-    reward_helper = RewardHelper(template="1x2", target_ratio=1.5) # need to make the template passable arg from main
+    reward_helper = RewardHelper(template="2x2") # need to make the template passable arg from main
 
     for epoch in range(epochs):
         # some things need resetting per episode
         episode_reward = 0
         episode_length = 0 # should end episode once we have a nice enough transmission profile, no? how many steps did it take to arrive there?
         next_graph = random.choice(graph_list) # don't want to always start from same design. P_0
+        # per-epoch loss aggregation for clearer logging
+        epoch_critic_loss_sum = 0.0
+        epoch_actor_loss_sum = 0.0
+        epoch_update_count = 0
         noise.reset()
         noise.scale = noise_scale_scheduler(epoch,
-                                            initial_scale=2.0, decay_rate=0.5,
+                                            initial_scale=2.0, decay_rate=0.98,
                                             min_scale=0.05) # best test some jazz
         
         for step in range(steps_per_epoch):
@@ -256,7 +260,7 @@ def train_ddpg(graph_list,
             action = torch.clamp(action, 0, 1)
 
             # ── Decode & simulate ──────────────────────
-            hole_flag, diameters = decode_actions_to_design(action) # equivalent to next state, with T
+            hole_flag, diameters = decode_actions_to_design(action, ste=True) # equivalent to next state, with T
             hole_flag_full, diameters_full = mirror_design(hole_flag, diameters, design_shape=binary_matrix_shape) # mirroring if halved
             
             # keep the fully worked action that gets used in MEEP, but halved because half
@@ -318,7 +322,9 @@ def train_ddpg(graph_list,
                     # --- Critic target ---
                     with torch.no_grad():
                         next_a = target_actor(s_next.x, s_next.edge_index, s_next.edge_attr)
-                        q_tgt = target_critic(s_next.x, s_next.edge_index, s_next.edge_attr, next_a)  # [1, 1]
+                        next_hole_flag, next_diameters = decode_actions_to_design(next_a, ste=False)
+                        next_a_exec = torch.stack([next_hole_flag, next_diameters], dim=1)
+                        q_tgt = target_critic(s_next.x, s_next.edge_index, s_next.edge_attr, next_a_exec)  # [1, 1]
                         q_target_list.append(q_tgt)
 
                     # --- Critic prediction ---
@@ -327,7 +333,9 @@ def train_ddpg(graph_list,
 
                     # --- Actor prediction (for actor loss) ---
                     pred_a = actor(s.x, s.edge_index, s.edge_attr)
-                    pred_actions_list.append(pred_a)
+                    pred_hole_flag, pred_diameters = decode_actions_to_design(pred_a, ste=True)
+                    pred_a_exec = torch.stack([pred_hole_flag, pred_diameters], dim=1)
+                    pred_actions_list.append(pred_a_exec)
 
                 # Stack values
                 q_target = torch.cat(q_target_list, dim=0)  # [B, 1]
@@ -378,6 +386,9 @@ def train_ddpg(graph_list,
                 writer.add_scalar("Transmission/Tt", Tt[-2], total_steps)
                 writer.add_scalar("Transmission/Tb", Tb[-2], total_steps)
                 writer.add_scalar("Reward", reward, total_steps)
+                epoch_critic_loss_sum += float(critic_loss.item())
+                epoch_actor_loss_sum += float(actor_loss.item())
+                epoch_update_count += 1
                 
             if good_enough:
                 # print summary and end episode; saving already occurs at detection time above
@@ -396,7 +407,7 @@ def train_ddpg(graph_list,
                 action = actor(eval_graph.x, eval_graph.edge_index, eval_graph.edge_attr)
             action = torch.clamp(action, 0, 1)
             
-            hole_flag, diameters = decode_actions_to_design(action) # equivalent to next state, with T
+            hole_flag, diameters = decode_actions_to_design(action, ste=False) # equivalent to next state, with T
             hole_flag_full, diameters_full = mirror_design(hole_flag, diameters, design_shape=binary_matrix_shape) # mirroring if halved
             Tt, Tb = simulation_cacher(cache, hole_flag_full, diameters_full) # they are returned as lists at this point
             # make them into tensors or next function fails
@@ -428,6 +439,9 @@ def train_ddpg(graph_list,
         writer.add_scalar("Episode Reward", episode_reward, epoch)
         writer.add_scalar("EWMA", ewma_reward, epoch)
         writer.add_scalar("Eval/Episode Reward", tot_eval_reward, epoch)
+        if epoch_update_count > 0:
+            writer.add_scalar("Loss/critic_epoch_avg", epoch_critic_loss_sum / epoch_update_count, epoch)
+            writer.add_scalar("Loss/actor_epoch_avg", epoch_actor_loss_sum / epoch_update_count, epoch)
         
         # saving the replay buffer after every epoch
         # buffer.save()
