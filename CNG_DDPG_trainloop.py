@@ -51,6 +51,25 @@ def _ensure_saved_designs_dir():
     return p
 
 
+def set_global_seed(seed: int, deterministic_torch: bool = True):
+    """Seed Python, NumPy, and PyTorch RNGs used throughout training."""
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed(seed)
+        torch.cuda.manual_seed_all(seed)
+
+    if deterministic_torch:
+        if hasattr(torch.backends, "cudnn"):
+            torch.backends.cudnn.deterministic = True
+            torch.backends.cudnn.benchmark = False
+        try:
+            torch.use_deterministic_algorithms(True)
+        except Exception:
+            print("Warning: could not enable full deterministic PyTorch algorithms.")
+
+
 def save_good_design(hole_flag_full, diameters_full, Tt, Tb, epoch, step, reward, actor=None, critic=None, tag="train"):
     """Persist a found good design: numpy arrays, PNG, metadata and optional model checkpoints.
 
@@ -179,18 +198,21 @@ def save_good_design(hole_flag_full, diameters_full, Tt, Tb, epoch, step, reward
 def train_ddpg(graph_list,
                epochs=1000,
                steps_per_epoch=1, # this should be the max episode length in any case
-               batch_size=64,
+               batch_size=16,
                gamma=0.99,
                tau=0.005,
                lr_actor=1e-4,
                lr_critic=1e-3,
-               update_every=8, # do gradient step N what? episodes or actions taken (across episodes)?
                buffer_capacity=10000,
                eval_interval=1,
-               binary_matrix_shape=(30,14)
+               binary_matrix_shape=(30,14),
+               seed=1234,
+               deterministic_torch=True,
                ):
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    set_global_seed(seed, deterministic_torch=deterministic_torch)
+    print(f"Using RNG seed: {seed}")
     
     initial_graph = random.choice(graph_list) # randomly select an initial design from list 
     
@@ -219,7 +241,7 @@ def train_ddpg(graph_list,
     buffer = PriorityReplayBuffer(buffer_capacity, initial_mode='td_error')
     
     # tensorboard's writer defined here
-    writer = SummaryWriter(log_dir='runs/ddpg_training/TSE_actions00')
+    writer = SummaryWriter(log_dir='runs/ddpg_training/TSE_action_StationaryReward')
     
     # global steps or total number of steps
     total_steps = 0 # count environment interactions
@@ -228,10 +250,10 @@ def train_ddpg(graph_list,
     ewma_reward = 0
     
     # init cache object and its directory
-    cache = DesignCache('./CacheLocation/cache_mini.json') # when designs change format, change cache...
+    cache = DesignCache('./CacheLocation/cache_v2.json') # when designs change format, change cache...
     
     # reward helper to keep track of some params
-    reward_helper = RewardHelper(template="2x2") # need to make the template passable arg from main
+    reward_helper = RewardHelper(template="2x2", alpha=1.0, beta=2.0) # keep 2x2 reward stationary
 
     for epoch in range(epochs):
         # some things need resetting per episode
@@ -273,8 +295,9 @@ def train_ddpg(graph_list,
             Tt = torch.Tensor(Tt)
             Tb = torch.Tensor(Tb)
 
-            # TODO: use the reward helper to obtain the reward
-            reward, good_enough = reward_helper.checking_criteria(Tt, Tb)
+            reward_helper.update_best_params(Tt, Tb)
+            reward = reward_helper.compute_reward(Tt, Tb)
+            good_enough = reward_helper.checking_criteria(Tt, Tb)
 
             # if next_graph = graph, it'd be stateless, which it's not, so create graph from new design after action
             updates_design = topology_matrix_from_decoded_actions(hole_flag_full, diameters_full, shape=binary_matrix_shape)
@@ -283,7 +306,6 @@ def train_ddpg(graph_list,
 
             # ───── check if episode termination criteria is met ─────
             if good_enough:
-                reward_helper.update_best_params(Tt, Tb)
                 try:
                     save_good_design(hole_flag_full, diameters_full, Tt, Tb, epoch, step, reward, actor=actor, critic=critic, tag="train")
                 except Exception:
@@ -393,7 +415,7 @@ def train_ddpg(graph_list,
             if good_enough:
                 # print summary and end episode; saving already occurs at detection time above
                 print(f"Episode Length: {episode_length}. Good enough: ({Tt},{Tb}), R:{reward}")
-                break
+                
         
         # pure evaluation
         next_graph = initial_graph.to(device) # start each evaluation form the same initial design
@@ -414,8 +436,9 @@ def train_ddpg(graph_list,
             Tt = torch.Tensor(Tt)
             Tb = torch.Tensor(Tb)
 
-            # reward should come from reward helper like in training 
-            reward, good_enough = reward_helper.checking_criteria(Tt, Tb)
+            reward_helper.update_best_params(Tt, Tb)
+            reward = reward_helper.compute_reward(Tt, Tb)
+            good_enough = reward_helper.checking_criteria(Tt, Tb)
 
             # if next_graph = graph, it'd be stateless, which it's not, so create graph from new design after action
             updates_design = topology_matrix_from_decoded_actions(hole_flag_full, diameters_full, binary_matrix_shape)
@@ -465,6 +488,9 @@ if __name__ == "__main__":
     parser.add_argument('--steps_per_epoch', type=int, default=16, help="Steps per epoch.")
     parser.add_argument('--batch_size', type=int, default=16, help="Batch size for training.")
     parser.add_argument('--binary_shape', type=str, help="Shape of the binary design matrices, e.g., '32,32'.")
+    parser.add_argument('--seed', type=int, default=1234, help="Random seed for Python, NumPy, and PyTorch.")
+    parser.add_argument('--allow_nondeterministic_torch', action="store_true",
+                        help="Allow nondeterministic PyTorch/CUDA kernels for speed.")
 
     args = parser.parse_args()
     # TODO: have to pass the arguments to the train loop and check hard coded matrix shapes
@@ -498,5 +524,7 @@ if __name__ == "__main__":
                                epochs=args.epochs,
                                steps_per_epoch=args.steps_per_epoch, 
                                batch_size=args.batch_size,
-                               binary_matrix_shape=(rows, cols)
+                               binary_matrix_shape=(rows, cols),
+                               seed=args.seed,
+                               deterministic_torch=not args.allow_nondeterministic_torch,
                                )

@@ -18,7 +18,9 @@ import numpy as np
 class RewardHelper:
     def __init__(self, template: str,
                  best_T: float = 0.6,
-                 delta_T: float = 0.06, 
+                 delta_T: float = 0.06,
+                 alpha: float = 1.0,
+                 beta: float = 2.0,
                  target_ratio: float = 3.0,
                  delta: float = 0.2):
         '''
@@ -29,56 +31,58 @@ class RewardHelper:
         self.template = template
         
         if template == "2x2":
-            self.best_T = best_T # since this is roughly transmission of opposite output arm
-            self.delta_T = delta_T # roughly 10%
+            self.best_T = float(best_T)
+            self.delta_T = float(delta_T)
+            self.alpha = float(alpha)
+            self.beta = float(beta)
         else:
             self.target_ratio = target_ratio # target split ratio
             self.delta = delta      # acceptable deviation from target ratio
             self.total_trans = 0.0
 
+    @staticmethod
+    def _min_transmissions(Tt, Tb):
+        '''
+        Helper function to compute the minimum transmission for top and bottom arm bands.
+        '''
+        min_t = torch.min(Tt)
+        min_b = torch.min(Tb)
+        return min_t, min_b
+
     def compute_reward(self, Tt, Tb):
         if self.template == "2x2":
-            return reward_balanced_transmission(Tt, Tb, self.best_T) # this is terrible param passing
+            min_t, min_b = self._min_transmissions(Tt, Tb)
+            return reward_balanced_transmission(min_t, min_b, self.alpha, self.beta)
         else:
             return reward_mini(Tt, Tb, self.delta, self.target_ratio)
         
     def update_best_params(self, Tt, Tb):
         if self.template == "2x2":
-            # Update best_T based on current performance
-            current_total = torch.min(Tt) + torch.min(Tb)
-            if current_total > self.best_T:
-                self.best_T = current_total
-            if abs(torch.min(Tt) - torch.min(Tb)) < self.delta_T:
-                self.delta_T = abs(torch.min(Tt) - torch.min(Tb))
-
+            min_t, min_b = self._min_transmissions(Tt, Tb)
+            current_total = float((min_t + min_b).item())
+            self.best_T = max(self.best_T, current_total)
+            difference = abs(float((min_t - min_b).item()))
+            self.delta_T = min(self.delta_T, difference)
         else:
             # for now we just keep track of the total transmission since the
             # different splits make it a bit more code heavy to track ratios
-            self.total_trans = torch.min(Tt) + torch.min(Tb)
+            min_t, min_b = self._min_transmissions(Tt, Tb)
+            self.total_trans = min_t + min_b
 
     def checking_criteria(self, Tt, Tb):
         if self.template == "2x2":
-            if (torch.abs(torch.min(Tt) - torch.min(Tb)) <= self.delta_T) and (torch.min(Tt)+torch.min(Tb) >= self.best_T):
-                self.update_best_params(Tt, Tb)
-                return self.compute_reward(Tt, Tb) + 10.0, True # bonus for meeting criteria, flag on
-            else:
-                return self.compute_reward(Tt, Tb), False # no bonus, flag off
+            min_t, min_b = self._min_transmissions(Tt, Tb)
+            totals = min_t + min_b
+            difference = torch.abs(min_t - min_b)
+            return bool(torch.abs(min_t - min_b) <= self.delta_T and totals >= self.best_T)
         else:
             # for mini splitter, just positive reward is delta within target ratio
             reward = self.compute_reward(Tt, Tb)
-            if reward > 0:
-                return reward, True 
-            else:
-                return reward, False
+            return bool(reward > 0)
             
 
-def reward_balanced_transmission(Tt, Tb, best_T):
-    reward = (
-                -best_T + torch.min(Tt)+torch.min(Tb) + # if total transmission is high, difference will be 0 or +
-                -2.0 * torch.abs(torch.min(Tt)-torch.min(Tb)) # large difference in transission per arm is bad
-                )
-    
-    return reward
+def reward_balanced_transmission(min_t, min_b, alpha, beta):
+    return alpha * (min_t + min_b) - beta * torch.abs(min_t - min_b)
 
 def reward_mini(Tt, Tb, delta, ratio):
     '''

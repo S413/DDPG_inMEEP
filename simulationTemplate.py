@@ -21,6 +21,7 @@ class MEEP_2x2Splitter():
         self.waveguide_length_tape = 4
         self.pml_size = 1.0
         self.resolution = 100
+        self.tapered = tapered
         
         self.Si = mp.Medium(index=3.45)
         self.SiO2 = mp.Medium(index=1.45)
@@ -130,8 +131,12 @@ class MEEP_2x2Splitter():
         
         self.fwidth = f_max - f_min
         
-        src_center = mp.Vector3(-self.sx*0.5 + self.pml_size + self.waveguide_length*0.25, -self.arm_separation*0.5 - self.waveguide_width*0.5 + 0.1, 0)
-        src_size = mp.Vector3(0, self.waveguide_width*1.2, 0) 
+        if self.tapered:
+            src_center = mp.Vector3(-self.sx*0.5 + self.pml_size + self.waveguide_length*0.25, -self.arm_separation*0.5 - self.waveguide_width*0.5 + 0.1, 0)
+            src_size = mp.Vector3(0, self.waveguide_width*1.2, 0) 
+        else:
+            src_center = mp.Vector3(-self.sx*0.5 + self.pml_size + self.waveguide_length*0.25, -self.arm_separation*0.5 - self.waveguide_width*0.5, 0)
+            src_size = mp.Vector3(0, self.waveguide_width*1.2, 0)
         
         src = mp.GaussianSource(self.fcen, self.fwidth)
         
@@ -157,47 +162,89 @@ class MEEP_2x2Splitter():
             
     def addFluxMonitors(self):
         nfreq = 100
-    
-        self.incidentMonitorTop = self.sim.add_flux(
-        self.fcen,
-        self.fwidth,
-        nfreq,
-        mp.FluxRegion(
-            center=mp.Vector3(-self.sx*0.5 + self.pml_size + self.waveguide_length*0.5,
-                              self.arm_separation*0.5 + self.waveguide_width*0.5 - 0.1),
-            size=mp.Vector3(0, self.waveguide_width*1.2)
-            )
-        )
-        self.incidentMonitorBot = self.sim.add_flux(
+
+        if self.tapered:
+            self.incidentMonitorTop = self.sim.add_flux(
             self.fcen,
             self.fwidth,
             nfreq,
             mp.FluxRegion(
                 center=mp.Vector3(-self.sx*0.5 + self.pml_size + self.waveguide_length*0.5,
-                                  -self.arm_separation*0.5 - self.waveguide_width*0.5 + 0.1),
+                                self.arm_separation*0.5 + self.waveguide_width*0.5 - 0.1),
                 size=mp.Vector3(0, self.waveguide_width*1.2)
                 )
             )
-        self.transMonitorTop = self.sim.add_flux(
+            self.incidentMonitorBot = self.sim.add_flux(
+                self.fcen,
+                self.fwidth,
+                nfreq,
+                mp.FluxRegion(
+                    center=mp.Vector3(-self.sx*0.5 + self.pml_size + self.waveguide_length*0.5,
+                                    -self.arm_separation*0.5 - self.waveguide_width*0.5 + 0.1),
+                    size=mp.Vector3(0, self.waveguide_width*1.2)
+                    )
+                )
+            self.transMonitorTop = self.sim.add_flux(
+                self.fcen,
+                self.fwidth,
+                nfreq,
+                mp.FluxRegion(
+                    center=mp.Vector3(self.sx*0.5 - self.waveguide_length*0.3,
+                                    self.arm_separation*0.5 + self.waveguide_width*0.5),
+                    size=mp.Vector3(0, self.waveguide_width*1.2)
+                    )
+                )
+            self.transMonitorBot = self.sim.add_flux(
+                self.fcen,
+                self.fwidth,
+                nfreq,
+                mp.FluxRegion(
+                    center=mp.Vector3(self.sx*0.5 - self.waveguide_length*0.3,
+                                    -self.arm_separation*0.5 - self.waveguide_width*0.5),
+                    size=mp.Vector3(0, self.waveguide_width*1.2)
+                    )
+                )
+        else:
+            self.incidentMonitorTop = self.sim.add_flux(
             self.fcen,
             self.fwidth,
             nfreq,
             mp.FluxRegion(
-                center=mp.Vector3(self.sx*0.5 - self.waveguide_length*0.3,
-                                  self.arm_separation*0.5 + self.waveguide_width*0.5),
+                center=mp.Vector3(-self.sx*0.5 + self.pml_size + self.waveguide_length*0.5,
+                                self.arm_separation*0.5 + self.waveguide_width*0.5),
                 size=mp.Vector3(0, self.waveguide_width*1.2)
                 )
             )
-        self.transMonitorBot = self.sim.add_flux(
-            self.fcen,
-            self.fwidth,
-            nfreq,
-            mp.FluxRegion(
-                center=mp.Vector3(self.sx*0.5 - self.waveguide_length*0.3,
-                                  -self.arm_separation*0.5 - self.waveguide_width*0.5),
-                size=mp.Vector3(0, self.waveguide_width*1.2)
+            self.incidentMonitorBot = self.sim.add_flux(
+                self.fcen,
+                self.fwidth,
+                nfreq,
+                mp.FluxRegion(
+                    center=mp.Vector3(-self.sx*0.5 + self.pml_size + self.waveguide_length*0.5,
+                                    -self.arm_separation*0.5 - self.waveguide_width*0.5 + 0.1),
+                    size=mp.Vector3(0, self.waveguide_width*1.2)
+                    )
                 )
-            )
+            self.transMonitorTop = self.sim.add_flux(
+                self.fcen,
+                self.fwidth,
+                nfreq,
+                mp.FluxRegion(
+                    center=mp.Vector3(self.sx*0.5 - self.waveguide_length*0.3 - self.pml_size,
+                                    self.arm_separation*0.5 + self.waveguide_width*0.5),
+                    size=mp.Vector3(0, self.waveguide_width*1.2)
+                    )
+                )
+            self.transMonitorBot = self.sim.add_flux(
+                self.fcen,
+                self.fwidth,
+                nfreq,
+                mp.FluxRegion(
+                    center=mp.Vector3(self.sx*0.5 - self.waveguide_length*0.3 - self.pml_size,
+                                    -self.arm_separation*0.5 - self.waveguide_width*0.5),
+                    size=mp.Vector3(0, self.waveguide_width*1.2)
+                    )
+                )
 
 class MEEP_1x2Splitter():
     def __init__(self):

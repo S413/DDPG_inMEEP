@@ -66,8 +66,12 @@ class DesignCache:
             self.load()
             
     def load(self):
-        with open(self.cache_file, 'r') as f:
-            self.cache = json.load(f)
+        try:
+            with open(self.cache_file, 'r') as f:
+                self.cache = json.load(f)
+        except (json.JSONDecodeError, ValueError):
+            # If file is empty or invalid JSON, start with empty cache
+            self.cache = {}
             
     def save(self):
         with open(self.cache_file, 'w') as f:

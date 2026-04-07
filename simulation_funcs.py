@@ -70,7 +70,7 @@ def run_meep_sim_wsl(hole_flag,
         elif _is_linux():
             mode_resolved = "linux"
             # define tmp directory here since it is linux and no need to convert or go to externals
-            TMP_DIR = pathlib.Path("/home/sergio/DDPG_inMEEP/tmp")
+            TMP_DIR = pathlib.Path("/home/sergio/MeepProj/DDPG_inMEEP/tmp")
         else:
             raise RuntimeError("Could not auto-detect runtime mode. Please specify 'mode' explicitly.")
     else:
@@ -117,8 +117,8 @@ def run_meep_sim_wsl(hole_flag,
             # use linux paths directly
             # some of the paths might also differ
 
-            python_path = "/home/sergio/miniconda3/envs/mp-rl/bin/python" # not sure what the python path will be in the server. Do that first.
-            script_path = "/home/sergio/DDPG_inMEEP/simulationScript/simulate_in_wsl.py"
+            python_path = "/home/sergio/anaconda3/envs/mp/bin/python" # not sure what the python path will be in the server. Do that first.
+            script_path = "/home/sergio/MeepProj/DDPG_inMEEP/simulate_in_wsl.py"
 
             cmd = [
                 python_path, script_path,
